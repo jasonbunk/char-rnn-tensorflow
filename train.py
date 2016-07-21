@@ -1,6 +1,7 @@
 from __future__ import print_function
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.util import nest
 
 import argparse
 import time
@@ -12,17 +13,21 @@ from model import Model
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='data/tinyshakespeare',
+    parser.add_argument('--data_dir', type=str, default='data/allshakespeare',
                        help='data directory containing input.txt')
     parser.add_argument('--save_dir', type=str, default='save',
                        help='directory to store checkpointed models')
     parser.add_argument('--rnn_size', type=int, default=128,
                        help='size of RNN hidden state')
-    parser.add_argument('--num_layers', type=int, default=2,
+    parser.add_argument('--learn_input_embedding', type=bool, default=True,
+                       help='Learn input embedding? If false, the one-hot representation is fed directly into the first RNN.')
+    parser.add_argument('--num_layers', type=int, default=3,
                        help='number of layers in the RNN')
-    parser.add_argument('--model', type=str, default='lstm',
+    parser.add_argument('--dropout', type=float, default=0.0,
+                       help='probability to drop a unit')
+    parser.add_argument('--model', type=str, default='dropgru',
                        help='rnn, gru, or lstm')
-    parser.add_argument('--batch_size', type=int, default=50,
+    parser.add_argument('--batch_size', type=int, default=250,
                        help='minibatch size')
     parser.add_argument('--seq_length', type=int, default=50,
                        help='RNN sequence length')
@@ -34,7 +39,7 @@ def main():
                        help='clip gradients at this value')
     parser.add_argument('--learning_rate', type=float, default=0.002,
                        help='learning rate')
-    parser.add_argument('--decay_rate', type=float, default=0.97,
+    parser.add_argument('--decay_rate', type=float, default=0.99,
                        help='decay rate for rmsprop')                       
     parser.add_argument('--init_from', type=str, default=None,
                        help="""continue training from saved model at this path. Path must contain files saved by previous training process: 
@@ -47,12 +52,31 @@ def main():
     args = parser.parse_args()
     train(args)
 
+def printargs(args):
+    print("data_dir == "+str(args.data_dir))
+    print("save_dir == "+str(args.save_dir))
+    print("rnn_size == "+str(args.rnn_size))
+    print("learn_input_embedding == "+str(args.learn_input_embedding))
+    print("num_layers == "+str(args.num_layers))
+    print("dropout == "+str(args.dropout))
+    print("model == "+str(args.model))
+    print("batch_size == "+str(args.batch_size))
+    print("seq_length == "+str(args.seq_length))
+    print("num_epochs == "+str(args.num_epochs))
+    print("save_every == "+str(args.save_every))
+    print("grad_clip == "+str(args.grad_clip))
+    print("learning_rate == "+str(args.learning_rate))
+    print("decay_rate == "+str(args.decay_rate))
+    print("init_from == "+str(args.init_from))
+
 def train(args):
+    print("training on \'"+args.data_dir+"\'")
     data_loader = TextLoader(args.data_dir, args.batch_size, args.seq_length)
     args.vocab_size = data_loader.vocab_size
     
     # check compatibility if training is continued from previously saved model
     if args.init_from is not None:
+        print("RELOADING FROM CHECKPOING")
         # check if all necessary files exist 
         assert os.path.isdir(args.init_from)," %s must be a a path" % args.init_from
         assert os.path.isfile(os.path.join(args.init_from,"config.pkl")),"config.pkl file does not exist in path %s"%args.init_from
@@ -73,12 +97,15 @@ def train(args):
             saved_chars, saved_vocab = cPickle.load(f)
         assert saved_chars==data_loader.chars, "Data and loaded model disagreee on character set!"
         assert saved_vocab==data_loader.vocab, "Data and loaded model disagreee on dictionary mappings!"
-        
+
     with open(os.path.join(args.save_dir, 'config.pkl'), 'wb') as f:
         cPickle.dump(args, f)
     with open(os.path.join(args.save_dir, 'chars_vocab.pkl'), 'wb') as f:
         cPickle.dump((data_loader.chars, data_loader.vocab), f)
-        
+
+    print("====================================")
+    printargs(args)
+    print("====================================")
     model = Model(args)
 
     with tf.Session() as sess:
@@ -90,17 +117,32 @@ def train(args):
         for e in range(args.num_epochs):
             sess.run(tf.assign(model.lr, args.learning_rate * (args.decay_rate ** e)))
             data_loader.reset_batch_pointer()
-            state = model.initial_state.eval()
+
+            if nest.is_sequence(model.initial_state):
+                if nest.is_sequence(model.initial_state[0]):
+                    state = tuple(tuple(is2.eval() for is2 in ist) for ist in model.initial_state)
+                else:
+                    state = tuple(ist.eval() for ist in model.initial_state)
+            else:
+                state = model.initial_state.eval()
+
+            for cell in model.cell._cells:
+                cell.reset_drop_mask()
+            print("reset dropout states")
+
             for b in range(data_loader.num_batches):
                 start = time.time()
                 x, y = data_loader.next_batch()
+                # shapes of x and y are (batchsize, seqlength); each element is an integer from 0 to (vocabsize-1)
                 feed = {model.input_data: x, model.targets: y, model.initial_state: state}
+                feed = model.extrafeed(feed)
                 train_loss, state, _ = sess.run([model.cost, model.final_state, model.train_op], feed)
                 end = time.time()
-                print("{}/{} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}" \
-                    .format(e * data_loader.num_batches + b,
-                            args.num_epochs * data_loader.num_batches,
-                            e, train_loss, end - start))
+                if (e * data_loader.num_batches + b) % 100 == 0:
+                    print("{}/{} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}" \
+                        .format(e * data_loader.num_batches + b,
+                                args.num_epochs * data_loader.num_batches,
+                                e, train_loss, end - start))
                 if (e * data_loader.num_batches + b) % args.save_every == 0\
                     or (e==args.num_epochs-1 and b == data_loader.num_batches-1): # save for the last result
                     checkpoint_path = os.path.join(args.save_dir, 'model.ckpt')

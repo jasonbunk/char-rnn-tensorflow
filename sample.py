@@ -16,12 +16,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_dir', type=str, default='save',
                        help='model directory to store checkpointed models')
-    parser.add_argument('-n', type=int, default=500,
+    parser.add_argument('-n', type=int, default=2000,
                        help='number of characters to sample')
-    parser.add_argument('--prime', type=text_type, default=u' ',
+    parser.add_argument('--prime', type=text_type, default=u'\n',
                        help='prime text')
     parser.add_argument('--sample', type=int, default=1,
                        help='0 to use max at each timestep, 1 to sample at each timestep, 2 to sample on spaces')
+    parser.add_argument('--temperature', type=float, default=1.0,
+                       help='Softmax sampling temperature, must be greater than zero; for very small values << 1, becomes equivalent to argmax() at each sampling step; for very large values >> 1, becomes equivalent to uniformly random selection')
 
     args = parser.parse_args()
     sample(args)
@@ -38,7 +40,9 @@ def sample(args):
         ckpt = tf.train.get_checkpoint_state(args.save_dir)
         if ckpt and ckpt.model_checkpoint_path:
             saver.restore(sess, ckpt.model_checkpoint_path)
-            print(model.sample(sess, chars, vocab, args.n, args.prime, args.sample))
+            print("=================================================")
+            print(model.sample(sess, chars, vocab, args.n, args.prime, args.sample, temperature=args.temperature))
+            print("=================================================")
 
 if __name__ == '__main__':
     main()

@@ -31,6 +31,9 @@ class TextLoader():
         count_pairs = sorted(counter.items(), key=lambda x: -x[1])
         self.chars, _ = zip(*count_pairs)
         self.vocab_size = len(self.chars)
+        print("After preprocessing \'"+input_file+"\', chose vocabulary size "+str(self.vocab_size)+"... characters:")
+        print(str(self.chars))
+        print(" ")
         self.vocab = dict(zip(self.chars, range(len(self.chars))))
         with open(vocab_file, 'wb') as f:
             cPickle.dump(self.chars, f)
@@ -41,6 +44,9 @@ class TextLoader():
         with open(vocab_file, 'rb') as f:
             self.chars = cPickle.load(f)
         self.vocab_size = len(self.chars)
+        print("From \'"+vocab_file+"\', vocabulary size "+str(self.vocab_size)+"... characters:")
+        print(str(self.chars))
+        print(" ")
         self.vocab = dict(zip(self.chars, range(len(self.chars))))
         self.tensor = np.load(tensor_file)
         self.num_batches = int(self.tensor.size / (self.batch_size *
