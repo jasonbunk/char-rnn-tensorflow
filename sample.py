@@ -1,10 +1,12 @@
 from __future__ import print_function
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
+
 import numpy as np
 import tensorflow as tf
 
 import argparse
 import time
-import os
 from six.moves import cPickle
 
 from utils import TextLoader
