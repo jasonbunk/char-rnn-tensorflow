@@ -41,21 +41,21 @@ class Model():
             cell = cell_fn(args.rnn_size)
             self.cell = cell = rnn_cell.MultiRNNCell([cell] * args.num_layers)
 
-        self.input_data = tf.placeholder(tf.int32, [self.batch_size, self.seq_length])
-        self.targets = tf.placeholder(tf.int32, [self.batch_size, self.seq_length])
+        self.input_data = tf.placeholder(tf.int32, [self.batch_size, self.seq_length], name="x_input_data")
+        self.targets = tf.placeholder(tf.int32, [self.batch_size, self.seq_length], name="y_targets")
         self.initial_state = cell.zero_state(self.batch_size, tf.float32)
 
         if args.learn_input_embedding:
             self.embedding = tf.get_variable("embedding", [args.vocab_size, args.vocab_size])
         else:
-            self.embedding = tf.placeholder(tf.float32, [args.vocab_size, args.vocab_size])
+            self.embedding = tf.placeholder(tf.float32, [args.vocab_size, args.vocab_size], name="embedding")
 
         self._dropMaskOutput = tf.placeholder(dtype=tf.float32, shape=[self.batch_size*self.seq_length, args.rnn_size], name="dropout_output_mask")
         self._latest_mask_output = None
 
         with tf.variable_scope('rnnlm'):
-            softmax_w = tf.get_variable("softmax_w", [args.rnn_size, args.vocab_size])
-            softmax_b = tf.get_variable("softmax_b", [args.vocab_size])
+            softmax_w = tf.get_variable("top_softmax_w", [args.rnn_size, args.vocab_size])
+            softmax_b = tf.get_variable("top_softmax_b", [args.vocab_size])
             inputs = tf.split(1, self.seq_length, tf.nn.embedding_lookup(self.embedding, self.input_data))
             inputs = [tf.squeeze(input_, [1]) for input_ in inputs]
 
@@ -65,7 +65,7 @@ class Model():
             prev_symbol = tf.stop_gradient(tf.argmax(prev, 1))
             return tf.nn.embedding_lookup(self.embedding, prev_symbol)
 
-        self.temperature = tf.placeholder(tf.float32, 1)
+        self.temperature = tf.placeholder(tf.float32, 1, name="temperature")
 
         # if loop_function is not None, it is used to generate the next input
         # otherwise, if it is None, the next input will be from the "inputs" sequence
@@ -77,18 +77,24 @@ class Model():
         self.probs = tf.nn.softmax(self.logits)
         self.probswithtemp = tf.nn.softmax(self.logits / self.temperature)
 
+        # 1.44... term converts cost from units of "nats" to units of "bits"
         self.cost = seq2seq.sequence_loss([self.logits],
                 [tf.reshape(self.targets, [-1])],
                 [tf.ones([self.batch_size * self.seq_length])]) * 1.44269504088896340736
-        # 1.44... term converts cost from units of "nats" to units of "bits"
+        self.pred_entropy = tf.reduce_sum(tf.mul(self.probs, tf.log(self.probs + 1e-12)), 1) * (-1.44269504088896340736)
 
         self.final_state = last_state
-        self.lr = tf.Variable(0.0, trainable=False)
+        self.lr = tf.Variable(0.0, trainable=False, name="learningrate")
         tvars = tf.trainable_variables()
         grads, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tvars),
                 args.grad_clip)
         optimizer = tf.train.AdamOptimizer(self.lr)
         self.train_op = optimizer.apply_gradients(zip(grads, tvars))
+
+        # for tensorboard
+        tb_cost = tf.scalar_summary('cost_train', self.cost)
+        tb_predent = tf.scalar_summary('prediction_entropy_train', tf.reduce_mean(self.pred_entropy))
+        self.tbsummary = tf.merge_summary([tb_cost, tb_predent])
 
     def extrafeed(self, feed):
         if self.args.learn_input_embedding == False:

@@ -79,6 +79,7 @@ class TextLoader():
         print(str(self.chars))
         self.vocab = dict(zip(self.chars, range(len(self.chars))))
         self.tensor = np.load(tensor_file)
+        assert(self.tensor.dtype == np.uint8)
 
     def create_batches(self):
         num_batches = int(self.tensor.size / (self.batch_size * self.seq_length))
@@ -86,8 +87,14 @@ class TextLoader():
         # When the data (tesor) is too small, let's give them a better error message
         if num_batches==0:
             assert False, "Not enough data. Make seq_length and batch_size small."
-
-        self.tensor = self.tensor[:(num_batches * self.batch_size * self.seq_length)]
+        
+        desiredsize = (num_batches * self.batch_size * self.seq_length)
+        maxsize = (int(3.5e9)/(self.batch_size*self.seq_length))*(self.batch_size*self.seq_length)
+        actualsize = min(maxsize, desiredsize)
+        num_batches = actualsize/(self.batch_size*self.seq_length)
+        print("chose dataset size "+str(actualsize)+", actual dataset size was "+str(desiredsize))
+        
+        self.tensor = self.tensor[:actualsize]
         xdata = self.tensor
         ydata = np.copy(self.tensor)
         ydata[:-1] = xdata[1:]
@@ -95,8 +102,9 @@ class TextLoader():
         x_batches = np.split(xdata.reshape(self.batch_size, -1), num_batches, 1)
         y_batches = np.split(ydata.reshape(self.batch_size, -1), num_batches, 1)
         assert(len(x_batches) == len(y_batches))
-        randombatchidxs = np.random.permutation(len(x_batches))
         numtestbatches = int(round(float(len(x_batches))*0.1)) # 10% for validation, 90% for training
+        maxnumtestbatches = (int(4e6)/(self.batch_size*self.seq_length)) # max validation size 4 MB
+        numtestbatches = min(numtestbatches, maxnumtestbatches)
         self.x_batches_te = x_batches[:numtestbatches]
         self.y_batches_te = y_batches[:numtestbatches]
         self.x_batches_tr = x_batches[numtestbatches:]
@@ -105,6 +113,7 @@ class TextLoader():
         self.num_batches_tr = len(self.x_batches_tr)
         if self.num_batches_te == 0 or self.num_batches_tr == 0:
             assert False, "Not enough data. Make seq_length and batch_size small."
+        self.tensor = None # try to free the memory (todo: draw x and y batches from same array, without np.copy)
         print("Set up with "+str(self.num_batches_tr)+" training batches and "+str(self.num_batches_te)+" validation batches")
 
     def next_batch_tr(self):
