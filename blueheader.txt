@@ -1,0 +1,18 @@
+<html>
+<body>
+<style>
+c0 {background-color: #ffffff;}
+c1 {background-color: #e6f5ff;}
+c2 {background-color: #ccebff;}
+c3 {background-color: #b3e0ff;}
+c4 {background-color: #99d6ff;}
+c5 {background-color: #80ccff;}
+c6 {background-color: #66c2ff;}
+c7 {background-color: #4db8ff;}
+c8 {background-color: #33adff;}
+c9 {background-color: #1aa3ff;}
+cx {background-color: #0099ff;}
+fg {color: #cccccc;}
+</style>
+<p style="font-family:'Courier New'">
+

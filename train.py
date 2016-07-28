@@ -9,6 +9,7 @@ from six.moves import cPickle
 
 from utils import TextLoader
 from model import Model
+from rendertext import rendertext
 import cPickle
 
 import matplotlib.mlab as mlab
@@ -196,7 +197,7 @@ def train(args):
         tf.initialize_all_variables().run()
         saver = tf.train.Saver(tf.all_variables())
 
-        print(" ")
+        print("====================================")
         allvars = tf.all_variables()
         trainablevars = tf.trainable_variables()
         for tvar in allvars:
@@ -206,7 +207,7 @@ def train(args):
                 print("@@@ "+tvar.name+" -- "+str(tvar.get_shape()))
             else:
                 print(tvar.name+" -- "+str(tvar.get_shape()))
-        print(" ")
+        print("====================================")
 
         # restore model
         if args.init_from is not None:
@@ -267,15 +268,14 @@ def train(args):
                             if ytruths is None:
                                 ytruths = thesetruths
                             testtimeperbatch += (thistimeperbatch / float(niters))
+                            #print("kk == "+str(kk+1)+"/"+str(niters))
                         meanprobdistrs /= float(niters)
                         meanpredentrops /= float(niters)
                         entropvar = entropyvariance(args, meanprobdistrs, meanpredentrops, plotfig=1)
                         testloss = np.mean(testlosses)
                         testlossstd = np.std(testlosses)
-                        if niters > 100:
-                            with open('MClosses_'+str(e)+'.pkl', 'wb') as ff:
-                                cPickle.dump(testlosses, ff)
-                                cPickle.dump(ytruths, ff)
+                        rendertext('blue', args.save_dir, 'z_'+str(bidx)+'_JSdiv', ytruths, entropvar)
+                        rendertext('blue', args.save_dir, 'z_'+str(bidx)+'_entrop', ytruths, np.reshape(meanpredentrops,(meanpredentrops.shape[1],meanpredentrops.shape[2])))
                         valpredentropy = np.mean(meanpredentrops)
                         valpredentrstd = np.std( meanpredentrops)
                         suffix = ", estimated from "+str(niters)+" MC samples"

@@ -28,22 +28,31 @@ class Model():
             raise Exception("model type not supported: {}".format(args.model))
 
         if args.model.startswith('drop'):
-            c1 = DropoutBasicRNNCell(   args.rnn_size, input_size=args.vocab_size, probofdrop_st=args.dropout, probofdrop_in=0.0)
-            if args.model == 'dropgru':
-                print("additional layers will be GRU")
-                c2 = DropoutGRUCell(    args.rnn_size, input_size=args.rnn_size,   probofdrop_st=args.dropout, probofdrop_in=args.dropout)
-            elif args.model == 'droprnn':
+            cells = []
+            
+            dt1 = DropoutBasicRNNCell
+            dt2 = DropoutGRUCell
+            if args.model != 'dropgru':
                 print("additional layers will be basic RNN")
-                c2 = DropoutBasicRNNCell(args.rnn_size, input_size=args.rnn_size,  probofdrop_st=args.dropout, probofdrop_in=args.dropout)
-
-            self.cell = cell = rnn_cell.MultiRNNCell([c1]+[c2]*(args.num_layers-1))
+                dt2 = DropoutBasicRNNCell
+            
+            for ii in range(args.num_layers):
+                if ii == 0:
+                    nc = dt1(args.vocab_size, input_size=args.vocab_size, probofdrop_st=args.dropout, probofdrop_in=0.0)
+                elif ii == 1:
+                    nc = dt2(args.rnn_size,   input_size=args.vocab_size, probofdrop_st=args.dropout, probofdrop_in=args.dropout)
+                else:
+                    nc = dt2(args.rnn_size,   input_size=args.rnn_size,   probofdrop_st=args.dropout, probofdrop_in=args.dropout)
+                cells.append(nc)
+            
+            self.cell = rnn_cell.MultiRNNCell(cells)
         else:
-            cell = cell_fn(args.rnn_size)
-            self.cell = cell = rnn_cell.MultiRNNCell([cell] * args.num_layers)
+            c1 = cell_fn(args.rnn_size)
+            self.cell = rnn_cell.MultiRNNCell([c1] * args.num_layers)
 
         self.input_data = tf.placeholder(tf.int32, [self.batch_size, self.seq_length], name="x_input_data")
         self.targets = tf.placeholder(tf.int32, [self.batch_size, self.seq_length], name="y_targets")
-        self.initial_state = cell.zero_state(self.batch_size, tf.float32)
+        self.initial_state = self.cell.zero_state(self.batch_size, tf.float32)
 
         if args.learn_input_embedding:
             self.embedding = tf.get_variable("embedding", [args.vocab_size, args.vocab_size])
@@ -69,7 +78,7 @@ class Model():
 
         # if loop_function is not None, it is used to generate the next input
         # otherwise, if it is None, the next input will be from the "inputs" sequence
-        outputs, last_state = seq2seq.rnn_decoder(inputs, self.initial_state, cell, loop_function=loop if infer else None, scope='rnnlm')
+        outputs, last_state = seq2seq.rnn_decoder(inputs, self.initial_state, self.cell, loop_function=loop if infer else None, scope='rnnlm')
         output = tf.reshape(tf.concat(1, outputs), [self.batch_size*self.seq_length, args.rnn_size])
 
         assert(output.get_shape() == self._dropMaskOutput.get_shape())
