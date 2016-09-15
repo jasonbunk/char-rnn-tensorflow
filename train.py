@@ -18,34 +18,36 @@ plt.ion()
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='data/wikipediaaa',
+    parser.add_argument('--data_dir', type=str, default='data/allhgwells',
                        help='data directory containing input.txt')
     parser.add_argument('--save_dir', type=str, default='save',
                        help='directory to store checkpointed models')
-    parser.add_argument('--rnn_size', type=int, default=192,
+    parser.add_argument('--rnn_size', type=int, default=512,
                        help='size of RNN hidden state')
-    parser.add_argument('--learn_input_embedding', type=bool, default=False,
+    parser.add_argument('--learn_input_embedding', type=bool, default=True,
                        help='Learn input embedding? If false, the one-hot representation is fed directly into the first RNN.')
-    parser.add_argument('--num_layers', type=int, default=3,
+    parser.add_argument('--num_layers', type=int, default=2,
                        help='number of layers in the RNN')
     parser.add_argument('--dropout', type=float, default=0.33333333,
                        help='probability to drop a unit')
     parser.add_argument('--model', type=str, default='dropgru',
                        help='rnn, gru, or lstm')
-    parser.add_argument('--batch_size', type=int, default=500,
+    parser.add_argument('--batch_size', type=int, default=64,
                        help='minibatch size')
-    parser.add_argument('--seq_length', type=int, default=50,
+    parser.add_argument('--seq_length', type=int, default=64,
                        help='RNN sequence length')
-    parser.add_argument('--num_epochs', type=int, default=100,
+    parser.add_argument('--num_epochs', type=int, default=10000,
                        help='number of epochs')
-    parser.add_argument('--save_every', type=int, default=1000,
+    parser.add_argument('--reset_every', type=int, default=11,
+                       help='state reset frequency')
+    parser.add_argument('--save_every', type=int, default=500,
                        help='save frequency')
-    parser.add_argument('--grad_clip', type=float, default=5.,
+    parser.add_argument('--grad_clip', type=float, default=1.0,
                        help='clip gradients at this value')
-    parser.add_argument('--learning_rate', type=float, default=0.002,
+    parser.add_argument('--learning_rate', type=float, default=5e-4,
                        help='learning rate')
-    parser.add_argument('--decay_rate', type=float, default=0.99,
-                       help='decay rate for rmsprop')                       
+    parser.add_argument('--decay_rate', type=float, default=0.999999,
+                       help='decay rate for rmsprop')
     parser.add_argument('--init_from', type=str, default=None,
                        help="""continue training from saved model at this path. Path must contain files saved by previous training process: 
                             'config.pkl'        : configuration;
@@ -69,6 +71,7 @@ def printargs(args):
     print("seq_length == "+str(args.seq_length))
     print("num_epochs == "+str(args.num_epochs))
     print("save_every == "+str(args.save_every))
+    print("reset_every == "+str(args.reset_every))
     print("grad_clip == "+str(args.grad_clip))
     print("learning_rate == "+str(args.learning_rate))
     print("decay_rate == "+str(args.decay_rate))
@@ -158,16 +161,21 @@ def train(args):
     print("====================================")
     model = Model(args)
 
-    def validateonce(expectationdropout=True):
+    def validateonce(expectationdropout=True, TrueIfVal_FalseIfTrain=True):
         data_loader.reset_batch_pointers()
-        state = model.resetstate(expectationdropout=expectationdropout)
+        model.resetweights(expectationdropout=expectationdropout)
+        state = model.resetstate()
         start = time.time()
         losses = []
+        backupptrtr = data_loader.pointer_tr
         entrps = None
         truths = None
         allprobs = None
         for b in range(data_loader.num_batches_te):
-            x, y = data_loader.next_batch_te()
+            if TrueIfVal_FalseIfTrain:
+                x, y = data_loader.next_batch_te()
+            else:
+                x, y = data_loader.next_batch_tr()
             # shapes of x and y are (batchsize, seqlength); each element is an integer from 0 to (vocabsize-1)
             feed = {model.input_data: x, model.targets: y, model.initial_state: state}
             feed = model.extrafeed(feed)
@@ -181,6 +189,7 @@ def train(args):
                 losses.append(-np.log2(probs[ii,y[ii]]))
             thesentropies = np.reshape(entropies,(1,args.batch_size,args.seq_length))
             entrps = tryconcat(entrps, thesentropies, axis=2)
+        data_loader.pointer_tr = backupptrtr
         end = time.time()
         testtimeperbatch = (end-start) / float(data_loader.num_batches_te)
         return (np.array(losses), truths, entrps, allprobs, testtimeperbatch)
@@ -192,7 +201,9 @@ def train(args):
     valsumscs_cost = tf.scalar_summary('cost_val', tf.reduce_sum(valsumplh_cost))
     valsumscs_pent = tf.scalar_summary('prediction_entropy_val', tf.reduce_sum(valsumplh_pent))
     sumwriter = tf.train.SummaryWriter(args.save_dir, graph=tf.get_default_graph())
-
+    
+    befstarttime = time.time()
+    
     with tf.Session() as sess:
         tf.initialize_all_variables().run()
         saver = tf.train.Saver(tf.all_variables())
@@ -200,13 +211,17 @@ def train(args):
         print("====================================")
         allvars = tf.all_variables()
         trainablevars = tf.trainable_variables()
+        trainableMB = 0
         for tvar in allvars:
             #print(type(tvar))
             #print(tvar.name+" -- "+str(tvar.dtype)+" -- "+str(tvar.get_shape()))
             if tvar in trainablevars:
                 print("@@@ "+tvar.name+" -- "+str(tvar.get_shape()))
+                trainableMB += 4*tvar.get_shape().num_elements()
             else:
                 print(tvar.name+" -- "+str(tvar.get_shape()))
+        print(" ")
+        print("trainable megabytes: "+str(float(trainableMB)/1e6))
         print("====================================")
 
         # restore model
@@ -214,39 +229,43 @@ def train(args):
             saver.restore(sess, ckpt.model_checkpoint_path)
         for e in range(args.num_epochs):
             # train model
-            sess.run(tf.assign(model.lr, args.learning_rate * (args.decay_rate ** e)))
+            newlr = args.learning_rate * (args.decay_rate ** e)
+            sess.run(tf.assign(model.lr, newlr))
             data_loader.reset_batch_pointers()
+            model.resetweights()
             state = model.resetstate()
             for b in range(data_loader.num_batches_tr):
+                model.resetweights() # reset weights at every gradient descent iteration,
+                                    # but don't necessarily reset the state
                 dovalidate = False
-                if b == (data_loader.num_batches_tr - 1):
-                    dovalidate = True
-                start = time.time()
+                #if b == (data_loader.num_batches_tr - 1):
+                #    dovalidate = True
                 x, y = data_loader.next_batch_tr()
                 # shapes of x and y are (batchsize, seqlength); each element is an integer from 0 to (vocabsize-1)
                 feed = {model.input_data: x, model.targets: y, model.initial_state: state}
                 feed = model.extrafeed(feed)
+                start = time.time()
                 train_loss, state, _, summary = sess.run([model.cost, model.final_state, model.train_op, model.tbsummary], feed)
                 end = time.time()
                 bidx = e * data_loader.num_batches_tr + b
                 sumwriter.add_summary(summary, bidx)
                 epstr = "{}/{} (epoch {})".format(bidx, args.num_epochs * data_loader.num_batches_tr, e+1)
                 if bidx % 100 == 0:
-                    print(epstr + ", train_loss = {:.3f}, time/batch = {:.3f}".format(train_loss, end - start))
+                    print(epstr + ", train_loss = {:.3f}, time/batch = {:.3f}, lr = {:.3f}".format(train_loss, end - start, newlr))
                 if bidx % args.save_every == 0\
                     or (e==args.num_epochs-1 and b == data_loader.num_batches_tr-1): # save for the last result
                     checkpoint_path = os.path.join(args.save_dir, 'model.ckpt')
                     saver.save(sess, checkpoint_path, global_step = bidx)
                     print(epstr+", model saved to {}".format(checkpoint_path))
-                if b > 0 and b % 500 == 0:
+                    dovalidate = True
+                if b > 0 and b % args.reset_every == 0:
                     state = model.resetstate()
-                    if b % 2500 == 0:
-                        dovalidate = True
-                    print(epstr+", reset state in the midst of a training epoch, at batch "+str(b+1)+"/"+str(data_loader.num_batches_tr))
+                    #print(epstr+", reset state in the midst of a training epoch, at batch "+str(b+1)+"/"+str(data_loader.num_batches_tr))
                 # validate model?
                 if dovalidate:
+                    valstr = ""
                     befvaltime = time.time()
-                    if args.dropout > 1e-3:
+                    if False and args.dropout > 1e-3:
                         testlosses = None
                         ytruths = None
                         meanpredentrops = None
@@ -280,13 +299,16 @@ def train(args):
                         valpredentrstd = np.std( meanpredentrops)
                         suffix = ", estimated from "+str(niters)+" MC samples"
                     else:
-                        theselosses, _, theseentrops, _, testtimeperbatch = validateonce(expectationdropout=True)
+                        theselosses, _, theseentrops, _, testtimeperbatch = validateonce(expectationdropout=True, TrueIfVal_FalseIfTrain=False)
+                        valstr += ", exp. tr. loss "+str(np.mean(theselosses))+", pred-ent "+str(np.mean(theseentrops))+" ("+str(testtimeperbatch)+" spb)"
+                        theselosses, _, theseentrops, _, testtimeperbatch = validateonce(expectationdropout=True, TrueIfVal_FalseIfTrain=True)
                         testloss   = np.mean(theselosses)
                         testlossstd = np.std(theselosses)
                         valpredentropy = np.mean(theseentrops)
                         valpredentrstd = np.std( theseentrops)
                         suffix = ", MC expectation"
-                    
+                    valstr += ", val loss "+str(testloss)+" w/std "+str(testlossstd)+", pred-ent "+str(valpredentropy)+" w/std "+str(valpredentrstd)+" ("+str(testtimeperbatch)+" spb)"+suffix
+
                     valsummary1 = sess.run([valsumscs_cost,], {valsumplh_cost:np.array(testloss).reshape((1,))})[0]
                     valsummary2 = sess.run([valsumscs_pent,], {valsumplh_pent:np.array(valpredentropy).reshape((1,))})[0]
                     sumwriter.add_summary(valsummary1, (e+1)*data_loader.num_batches_tr)
@@ -294,7 +316,7 @@ def train(args):
                     
                     aftvaltime = time.time()
                     
-                    print(epstr+", val loss "+str(testloss)+" w/std "+str(testlossstd)+", pred-ent "+str(valpredentropy)+" w/std "+str(valpredentrstd)+" ("+str(testtimeperbatch)+" sec per batch)"+suffix)
+                    print(epstr+valstr)
                     print("validation time: "+str(aftvaltime-befvaltime)+" sec")
 
 if __name__ == '__main__':

@@ -79,6 +79,7 @@ class TextLoader():
         print(str(self.chars))
         self.vocab = dict(zip(self.chars, range(len(self.chars))))
         self.tensor = np.load(tensor_file)
+        print("self.tensor.dtype == "+str(self.tensor.dtype)+", self.tensor.shape == "+str(self.tensor.shape))
         assert(self.tensor.dtype == np.uint8)
 
     def create_batches(self):
@@ -102,7 +103,7 @@ class TextLoader():
         x_batches = np.split(xdata.reshape(self.batch_size, -1), num_batches, 1)
         y_batches = np.split(ydata.reshape(self.batch_size, -1), num_batches, 1)
         assert(len(x_batches) == len(y_batches))
-        numtestbatches = int(round(float(len(x_batches))*0.1)) # 10% for validation, 90% for training
+        numtestbatches = int(round(float(len(x_batches))*0.15)) # 15% for validation, 85% for training
         maxnumtestbatches = (int(4e6)/(self.batch_size*self.seq_length)) # max validation size 4 MB
         numtestbatches = min(numtestbatches, maxnumtestbatches)
         self.x_batches_te = x_batches[:numtestbatches]

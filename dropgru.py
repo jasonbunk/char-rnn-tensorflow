@@ -28,6 +28,7 @@ class _DropoutRNNCell(rnn_cell.RNNCell):
     self._dropMaskState = tf.placeholder(dtype=tf.float32, shape=[None, num_units], name=bname+"State")
     self._latest_mask_input = None
     self._latest_mask_state = None
+    print("built _DropoutRNNCell with input_size "+str(input_size)+" and num_units "+str(num_units))
 
   def expectation_drop_mask(self, batch_size):
     self._latest_mask_input = np.ones((batch_size,self.insz)) * self._probof1_in
@@ -81,8 +82,12 @@ class DropoutGRUCell(_DropoutRNNCell):
     """Gated recurrent unit (GRU) with nunits cells."""
     
     with vs.variable_scope(scope or type(self).__name__):
-      assert(self._dropMaskInput.get_shape()[1:] == inputs.get_shape()[1:])
-      assert(self._dropMaskState.get_shape()[1:] == state.get_shape()[1:])
+      if self._dropMaskInput.get_shape()[1:] != inputs.get_shape()[1:]:
+        print("error: "+str(self._dropMaskInput.get_shape()[1:])+" != "+str(inputs.get_shape()[1:]))
+        assert(False)
+      if self._dropMaskState.get_shape()[1:] != state.get_shape()[1:]:
+        print("error: "+str(self._dropMaskState.get_shape()[1:])+" != "+str(state.get_shape()[1:]))
+        assert(False)
       dropin = tf.mul(self._dropMaskInput, inputs)
       dropst = tf.mul(self._dropMaskState, state)
 
